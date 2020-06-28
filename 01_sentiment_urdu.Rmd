@@ -1,0 +1,160 @@
+---
+title: "Urdu Language Sentiment Classifier"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+# Analyze input file
+
+Source file
+
+```{r}
+fname <- "data/Roman Urdu DataSet.csv"
+```
+
+Encoding is UTF-8
+
+```{r}
+guess_encoding(fname)
+```
+
+Look at the first few lines of file:
+
+- comma separated, header is missing
+
+```{r}
+read_lines(fname,n_max = 3)
+```
+
+Reads 3-col csv as characters
+
+```{r}
+df_urdu <- read_csv("data/Roman Urdu DataSet.csv",col_names = c("phrase","sentiment","bogus"),
+                    col_types = "ccc", # all are chars
+                    #n_max=3
+                    )
+df_urdu %>% glimpse
+```
+
+Third column can truly be ignored
+
+```{r}
+df_urdu %>% count(bogus,sort=T)
+```
+
+Categories on sentiment column:
+
+```{r}
+df_urdu %>% count(sentiment,sort=T)
+```
+
+One sacred line with "Neative", what is it?
+
+```{r}
+df_urdu %>% filter(sentiment == "Neative")
+```
+A few lines have NA phrases, which need to be removed.
+
+```{r}
+df_urdu %>%
+  filter(is.na(phrase))
+```
+# Study characters in the set
+
+```{r}
+df_urdu$phrase[1] %>% str_split("")
+```
+
+Frequency count of all chars used
+
+```{r}
+count_chars <- function(df,col) {
+  df %>%  # head(10) %>%
+  mutate(chars = {{col}} %>% str_split("")) %>%
+  select(chars) %>%
+  unnest(chars) %>%
+  count(chars,sort=T) %>%
+  mutate(prop=sprintf("%.3f",n/sum(n)))  
+}
+```
+
+```{r}
+df_char_freq <- df_urdu %>% count_chars(phrase)
+df_char_freq%>%glimpse
+```
+
+Which are non-alpha. Note 0x001F602 doesn't exist.
+
+```{r}
+df_char_freq %>% filter(!str_detect(chars,"[:alpha:]"))
+```
+Preprocessing steps:
+
+- eliminate NA phrases
+- change 'Neative' to 'Negative'
+- eliminate non-alpha (includes numbers)
+- convert all to lower-case
+- squish multiple spaces
+
+```{r}
+df_urdu_clean <- df_urdu %>%
+  filter(!is.na(phrase)) %>%
+  mutate(phrase=if_else(phrase=="Neative","Negative",phrase)) %>%
+  mutate(phrase_clean=phrase %>%
+           str_remove_all("[^ [:alpha:]]") %>%
+           str_to_lower() %>%
+           str_squish()) %>%
+  select(phrase_clean,sentiment)
+df_urdu_clean %>% head(10)
+```
+Confirm chars are ok
+
+```{r}
+df_urdu_clean %>% count_chars(phrase_clean)
+```
+# Estudo de tokens
+
+```{r}
+df_urdu_tokens <- df_urdu_clean %>%
+  mutate(token = str_split(phrase_clean,fixed(" "))) %>%
+  select(token) %>%
+  unnest(token) %>%
+  count(token,sort=T) %>%
+  mutate(id=row_number(),
+         prop=n/sum(n),
+         propSum=cumsum(prop))
+df_urdu_tokens
+```
+Create term matrix. Each rows has the count of the top N tokens
+
+```{r}
+library(tm)
+corpus_urdu <- SimpleCorpus(VectorSource(df_urdu_clean$phrase_clean))
+```
+
+Creat a document term matrix
+
+```{r}
+dtm_urdu <- DocumentTermMatrix(corpus_urdu)
+dtm_urdu %>% dim
+```
+
+Inspect first five lines and first 10 columns
+
+```{r}
+inspect(dtm_urdu[1:5,1:10])
+```
+
+## PCA
+
+```{r}
+library(h2o)
+```
+
+```{r}
+h2o.init()
+```
+
