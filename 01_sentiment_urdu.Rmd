@@ -1,14 +1,47 @@
 ---
 title: "Urdu Language Sentiment Classifier"
-output: html_document
+author: Dan S. Reznik
+date: 29-jul-2020
+output:
+  rmdformats::readthedown:
+    code_folding: show
+    number_sections: true
+    toc_depth: 1
+    highlight: tango
 ---
 
-```{r}
+```{r,message=F}
 library(tidyverse)
 library(tm)
 library(xgboost)
 library(h2o)
 ```
+
+# Description of Problem
+
+- *Background*: A large multinational corporation is seeking to automatically identify the sentiment
+that their customer base talks about on social media. They would like to expand this
+capability into multiple languages. Many 3rd party tools exist for sentiment analysis,
+however, they need help with under-resourced languages.
+
+- *Goal*:  Train a sentiment classifier (Positive, Negative, Neutral) on a corpus of the provided
+documents. Your goal is to maximize accuracy. There is special interest in being able
+to accurately detect negative sentiment. The training data includes documents from
+a wide variety of sources, not merely social media, and some of it may be
+inconsistently labeled. Please describe the business outcomes in your work sample
+including how data limitations impact your results and how these limitations could
+be addressed in a larger project.
+
+- *Data*:  Link to data: http://archive.ics.uci.edu/ml/datasets/Roman+Urdu+Data+Set
+
+## Outline of the solution:
+
+1. Analyze data, data quality, cleanse data
+1. Create document term matrix (rows are the documents, columns are non-sparse terms)
+1. Filter out "neutrals", only keep "negative" and "positive" documents
+1. Train multiple ML models (H2O automl) with double weights on the negative training examples, use "misclassification" as the functional to optimize.
+1. Produce a leaderboard, report metrics, e.g., our AUC was 81-82%, and confusion matrix shows error rate for negatives of only 11%.
+1. Suggestions os improvement to the approach provided in the end
 
 # Analyze input file
 
@@ -120,7 +153,7 @@ Confirm chars are ok
 ```{r}
 df_urdu_clean %>% count_chars(phrase_clean)
 ```
-# Estudo de tokens
+# Token-oriented study
 
 ```{r}
 df_urdu_tokens <- df_urdu_clean %>%
@@ -168,15 +201,16 @@ df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>% as.matrix %>% as_tibble
 df_urdu_dtm %>% dim
 ```
 
-# H2O PCA and ML
+# Train ML models with H2O autoML()
 
 ```{r}
 h2o.init()
+# h2o.shutdown()
 ```
 
 XGBoost only available on mac or linux
 
-```{r}
+```{r,eval=F}
 h2o.xgboost.available()
 ```
 
@@ -193,7 +227,7 @@ Convert to h2o matrix
 
 Bring sentiment column: note, removing neutral and allocate twice the weight to Negative
 
-```{r}
+```{r,eval=F}
 df_urdu_dtm_y <- df_urdu_dtm %>%
   bind_cols(df_urdu_clean %>% select(sentiment) %>%
               mutate_at(vars(sentiment),as.factor)) %>%
@@ -206,80 +240,106 @@ df_urdu_dtm_y <- df_urdu_dtm %>%
 
 Cast to h2o data frame
 
-```{r}
+```{r,eval=F}
 df_urdu_h2o <- df_urdu_dtm_y %>%
   as.h2o()
 df_urdu_h2o
 ```
-
-Ideias para amanha:
-
-- should make separate classifier for neutral?
-- should we combine neutral + positive? (i.e., only cares about detecting negatives)
-- We could do a correlation table (perceptron-like)
-- Add xgboost
+AutoML main call (trains a bunch models, with 5-fold CV)
 
 ```{r,eval=F}
 ml_urdu <- h2o::h2o.automl(y="sentiment",
                            weights_column = "weight",
                            training_frame=df_urdu_h2o,
-                           max_runtime_secs = 3600,
+                           max_runtime_secs = 360,
                            seed=0,
                            stopping_metric = "misclassification")
 ```
 
-Which models on leaderboard?
+Write leaderboard to file
 
-```{r}
-ml_urdu@leaderboard$model_id
+```{r,eval=F}
+ml_urdu@leaderboard %>% as_tibble %>% write_csv("leaderboard.csv")
 ```
 
 ```{r}
+df_leaderboard <- read_csv("leaderboard.csv")
+```
+
+Show leader board, getting ~81% AUC
+
+```{r}
+df_leaderboard %>%
+  mutate(model_id=str_sub(model_id,end=20)) %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed")
+)
+```
+Confusion matrix
+
+Save names of models to file (to be able to retrieve order)
+
+```{r,eval=F}
 ml_urdu@leaderboard$model_id %>%
-  map(~{h2o.saveModel(object=h2o.getModel(.x),
-                      path="models",force=T)})
+  as_tibble %>%
+  write_csv("saved_models.csv")
 ```
 
+Save models to file
 
-has the list of all model ids that were built. You can then pass each of those to h2o.getModel() (which you can then call h2o.saveModel() on).
+```{r,eval=F}
+ml_urdu@leaderboard$model_id %>%
+  as.data.frame %>% pull(model_id) %>%
+  head(6) %>%
+  walk(~h2o.saveModel(h2o.getModel(.x),path="models",force=T))
 ```
 
+Read saved models list
 
 ```{r}
-h2o.saveModel()
-ml_urdu %>% write_rds()
+df_saved_models <- read_csv("saved_models.csv")
 ```
-
+Retrieve saved models as h2o model objects
 
 ```{r}
-h2o.get_leaderboard(ml_urdu)
+list_loaded_models <- df_saved_models$model_id %>%
+  head(6) %>%
+  map(~h2o.loadModel(str_c("models/",.x)))
 ```
+
+Report confusion matrix of the top model
 
 ```{r}
-h2o.varimp_plot(h2o.getModel("GLM_1_AutoML_20200628_181701"))
+h2o.confusionMatrix(list_loaded_models[[1]])
 ```
 
+Plots variable importance for first model which is not Stacked (h2o cannot do it for the stacked ones)
 
 ```{r}
-h2o.varimp_plot(ml_urdu@leader)
+h2o.varimp_plot(list_loaded_models%>%discard(~str_starts(.x@model_id,"Stacked"))%>%first)
 ```
-
 
 ```{r}
 h2o::h2o.shutdown()
 ```
 
-## PCA
-
-```{r}
-urdu_pca <- h2o::h2o.prcomp(mtx_h2o,k=20)
-urdu_pca
-```
 
 # Business outcomes
 
-Sentiment analysis in urdu could help one automatically gauge the collective sentiment of tweets, posts in a brand page, and chat channels, and other natural language media, for the purposes of sizing, training, and focusing customer care. Another application might be for one to choose good marketing messages and/or price digital marketing real-estate.
+Gauge the group or individual sentiment of tweets, chats, etc. so as to:
+- Plan, train, alert customer care representatives
+- Fine-tune marketing messages which optimize sentimen
 
-# Data Limitations
+# Next steps, Data Limitations
 
-The sample is much too small (20k snippets), though the quality is generally good. Another approach might be to translate the words in urdu into english and use english positive/negative sentiment. Yet another approach might be to build large correlation matrices of each of the ~32k words and the positive/negative/neutral labels.
+The sample is small (20k snippets), though the quality is generally good. Ideas:
+
+- Play with sparsity threshold to include more or less words into vocabulary.
+- Play with PCA (initial tests did not help)
+- Play with TF*IDF on document term matrix (initial tests were not good)
+- Play with other classification approaches
+- Translate Urdu words into English and augment with English positive/negative sentiment word tables.
+- Build correlation matrices of each of the non-sparse unique words and the positive/negative/neutral labels. Do a naive-bayes and/or perceptron classifier. Blend its predictions w/ the best ML one.
+- Could have separate classifier for "Neutral"
+- Test Union(Neutral,Positive) vs Negative
+- Use XGBoost, needs h2o on Linux or Mac
