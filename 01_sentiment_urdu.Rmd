@@ -10,13 +10,6 @@ output:
     highlight: tango
 ---
 
-```{r,message=F}
-library(tidyverse)
-library(tm)
-library(xgboost)
-library(h2o)
-```
-
 # Description of Problem
 
 - *Background*: A large multinational corporation is seeking to automatically identify the sentiment
@@ -44,6 +37,15 @@ be addressed in a larger project.
 1. Suggestions os improvement to the approach provided in the end
 
 # Analyze input file
+
+Load packages
+
+```{r,message=F}
+library(tidyverse)
+library(tm)
+library(xgboost)
+library(h2o)
+```
 
 Source file
 
@@ -334,12 +336,21 @@ Gauge the group or individual sentiment of tweets, chats, etc. so as to:
 
 The sample is small (20k snippets), though the quality is generally good. Ideas:
 
+- Augment the "bag of words" approach with order-depedency (use non-sparse 2- and 3-word sequences as features)
+- Use some order dependency to corroborate sentiment, LSTM or HMMs come to mind 
 - Play with sparsity threshold to include more or less words into vocabulary.
-- Play with PCA (initial tests did not help)
+- Play with PCA (initial tests did not help), and other kinds (non-linear) of dimensionality reduction, see picture below
 - Play with TF*IDF on document term matrix (initial tests were not good)
-- Play with other classification approaches
+- DO high  with other classification algos
 - Translate Urdu words into English and augment with English positive/negative sentiment word tables.
-- Build correlation matrices of each of the non-sparse unique words and the positive/negative/neutral labels. Do a naive-bayes and/or perceptron classifier. Blend its predictions w/ the best ML one.
+- Build correlation matrices of each of the non-sparse unique words and the positive/negative/neutral labels. Do a naive-bayes and/or perceptron classifier. Blend its predictions w/ the best ML one
 - Could have separate classifier for "Neutral"
 - Test Union(Neutral,Positive) vs Negative
 - Use XGBoost, needs h2o on Linux or Mac
+
+## Types of dimensionality reduction
+
+```{r,echo=F}
+knitr::include_graphics("pics/dim_red.png")
+```
+
