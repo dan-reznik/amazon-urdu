@@ -30,11 +30,11 @@ be addressed in a larger project.
 ## Outline of the solution:
 
 1. Analyze data, data quality, cleanse data
-1. Create document term matrix (rows are the documents, columns are non-sparse terms)
+1. Will go for a "bag of words" (orderless) approach. Create document term matrix (rows are the documents, columns are non-sparse terms)
 1. Filter out "neutrals", only keep "negative" and "positive" documents
 1. Train multiple ML models (H2O automl) with double weights on the negative training examples, use "misclassification" as the functional to optimize.
 1. Produce a leaderboard, report metrics, e.g., our AUC was 81-82%, and confusion matrix shows error rate for negatives of only 11%.
-1. Suggestions os improvement to the approach provided in the end
+1. Suggestions for improvements to the appearin the end
 
 # Analyze input file
 
@@ -102,7 +102,7 @@ A few lines have NA phrases, which need to be removed.
 df_urdu %>%
   filter(is.na(phrase))
 ```
-# Study characters in the set
+## Study characters in the set
 
 ```{r}
 df_urdu$phrase[1] %>% str_split("")
@@ -169,7 +169,7 @@ df_urdu_tokens <- df_urdu_clean %>%
 df_urdu_tokens
 ```
 
-# Document Term Matrix
+## Build Document Term Matrix
 
 Create term matrix. Each rows has the count of the top N tokens
 
@@ -203,7 +203,7 @@ df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>% as.matrix %>% as_tibble
 df_urdu_dtm %>% dim
 ```
 
-# Train ML models with H2O autoML()
+# Train ML models
 
 ```{r}
 h2o.init()
@@ -264,6 +264,8 @@ Write leaderboard to file
 ml_urdu@leaderboard %>% as_tibble %>% write_csv("leaderboard.csv")
 ```
 
+Recover leaderboard
+
 ```{r}
 df_leaderboard <- read_csv("leaderboard.csv")
 ```
@@ -272,24 +274,18 @@ Show leader board, getting ~81% AUC
 
 ```{r}
 df_leaderboard %>%
-  mutate(model_id=str_sub(model_id,end=20)) %>%
-  knitr::kable() %>%
-  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed")
-)
+  mutate(model_id=str_sub(model_id,end=20)) # %>%
+  #knitr::kable() %>%
+  #kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed")
+#)
 ```
-Confusion matrix
-
-Save names of models to file (to be able to retrieve order)
+Save names of models and models to file (to be able to retrieve order)
 
 ```{r,eval=F}
 ml_urdu@leaderboard$model_id %>%
   as_tibble %>%
   write_csv("saved_models.csv")
-```
 
-Save models to file
-
-```{r,eval=F}
 ml_urdu@leaderboard$model_id %>%
   as.data.frame %>% pull(model_id) %>%
   head(6) %>%
@@ -301,6 +297,7 @@ Read saved models list
 ```{r}
 df_saved_models <- read_csv("saved_models.csv")
 ```
+
 Retrieve saved models as h2o model objects
 
 ```{r}
@@ -309,16 +306,29 @@ list_loaded_models <- df_saved_models$model_id %>%
   map(~h2o.loadModel(str_c("models/",.x)))
 ```
 
-Report confusion matrix of the top model
+Report confusion matrix of the top model (~13% error rate for "Negative"=TRUE)
 
 ```{r}
 h2o.confusionMatrix(list_loaded_models[[1]])
 ```
 
-Plots variable importance for first model which is not Stacked (h2o cannot do it for the stacked ones)
+Plot AUC curve for 1st non-stacked model
 
 ```{r}
-h2o.varimp_plot(list_loaded_models%>%discard(~str_starts(.x@model_id,"Stacked"))%>%first)
+model_non_stacked <- list_loaded_models%>%discard(~str_starts(.x@model_id,"Stacked"))%>%first
+model_non_stacked@model_id
+```
+
+Plot AUC of top non-stacked model
+
+```{r}
+plot(model_non_stacked%>%h2o.performance(xval=T),type="roc")
+```
+
+Plot variable importance for the first non-stacked model
+
+```{r}
+h2o.varimp_plot(model_non_stacked)
 ```
 
 ```{r}
@@ -326,29 +336,39 @@ h2o::h2o.shutdown()
 ```
 
 
-# Business outcomes
+# Business outcomes and Next Steps
 
-Gauge the group or individual sentiment of tweets, chats, etc. so as to:
+## Business value
+
+Assess individual or group sentiment of tweets, chats, etc. so as to:
 - Plan, train, alert customer care representatives
-- Fine-tune marketing messages which optimize sentimen
+- Fine-tune marketing messages which optimize sentiment
+- Quickly identify disgruntled employees, users, customers, bad brand interaction, etc.
 
-# Next steps, Data Limitations
+## Suggested next steps
 
-The sample is small (20k snippets), though the quality is generally good. Ideas:
+- Dataset
+  - The sample is small (20k snippets), though the quality is generally good
+  
+- Potential fine-tunings to currente approach
+  - Play with sparsity threshold to include more or less words into vocabulary.
+  - Use non-linear of dimensionality reduction, e.g. t-SNE, see picture below,
+    - Test Union(Neutral,Positive) vs Negative
+  - Use XGBoost, needs h2o on Linux or Mac
+  - Could have separate classifier for "Neutral"
+- Tried but ineffective
+  - PCA (no effective compression)
+  - Play with TF*IDF on document term matrix (initial tests were not good)
 
-- Augment the "bag of words" approach with order-depedency (use non-sparse 2- and 3-word sequences as features)
-- Use some order dependency to corroborate sentiment, LSTM or HMMs come to mind 
-- Play with sparsity threshold to include more or less words into vocabulary.
-- Play with PCA (initial tests did not help), and other kinds (non-linear) of dimensionality reduction, see picture below
-- Play with TF*IDF on document term matrix (initial tests were not good)
-- DO high  with other classification algos
-- Translate Urdu words into English and augment with English positive/negative sentiment word tables.
-- Build correlation matrices of each of the non-sparse unique words and the positive/negative/neutral labels. Do a naive-bayes and/or perceptron classifier. Blend its predictions w/ the best ML one
-- Could have separate classifier for "Neutral"
-- Test Union(Neutral,Positive) vs Negative
-- Use XGBoost, needs h2o on Linux or Mac
+- Other approaches
+  - Translate Urdu words into English and augment with English positive/negative sentiment word tables.
+  - Augment the "bag of words" approach with order-depedency (use non-sparse 2- and 3-word sequences as features).
+  - Use some order dependency to corroborate sentiment, LSTM or HMMs come to mind 
+  - Build correlation matrices of each of the non-sparse unique words and the positive/negative/neutral labels. Do a naive-bayes and/or perceptron classifier. Blend its predictions w/ the best ML one
 
 ## Types of dimensionality reduction
+
+[source](https://cran.r-project.org/web/packages/dimRed/vignettes/dimensionality-reduction.pdf)
 
 ```{r,echo=F}
 knitr::include_graphics("pics/dim_red.png")
