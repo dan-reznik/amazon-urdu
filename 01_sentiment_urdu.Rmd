@@ -42,6 +42,7 @@ Load packages
 
 ```{r,message=F}
 library(tidyverse)
+library(data.table)
 library(tm)
 library(xgboost)
 library(h2o)
@@ -183,7 +184,7 @@ Creat a document term matrix
 fn_tf_idf <- function(x) weightTfIdf(x, normalize = F)
 
 dtm_urdu <- DocumentTermMatrix(corpus_urdu
-                               #, control = list(weighting = tfidf_fn)
+                               , control = list(weighting = fn_tf_idf)
                                )
 dtm_urdu
 ```
@@ -199,11 +200,114 @@ Note: 99.8% sparsity => 673 columns, AUC ~ 75%
 995 => ~200 columns, AUC falls to 70%
 
 ```{r}
-df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>% as.matrix %>% as_tibble
+df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>%
+  as.matrix %>%  as_tibble %>%
+  bind_cols(df_urdu_clean %>% select(sentiment) %>%
+              mutate_at(vars(sentiment),as.factor)) %>%
+  select(sentiment,everything())
 df_urdu_dtm %>% dim
 ```
 
-# Train ML models
+# (Failed Attempt 1): Linear separability
+
+Create train (80%) and test sets.
+
+```{r}
+set.seed(0)
+permutations <- sample.int(nrow(df_urdu_dtm),nrow(df_urdu_dtm))
+train_pct <- 0.8
+train_max <- as.integer(length(permutations)*train_pct)
+df_urdu_dtm_train <- df_urdu_dtm[permutations[1:train_max],]
+df_urdu_dtm_test <- df_urdu_dtm[permutations[(train_max+1):length(permutations)],]
+```
+
+Get prob matrix of top 100 words, only using 80% of the dataset
+
+```{r}
+df_urdu_word_probs <- df_urdu_dtm_train %>%
+  pivot_longer(-sentiment) %>%
+  group_by(sentiment,name) %>%
+  summarize(value=sum(value)) %>%
+  group_by(sentiment) %>%
+  # slice_max(n=1000, order_by=value) %>%
+  ungroup() %>%
+  pivot_wider(names_from="sentiment") %>%
+  rowwise() %>%
+  mutate(total=sum(c_across(Negative:Positive))) %>%
+  ungroup() %>%
+  mutate_at(vars(Negative:Positive),~./sum(.))
+df_urdu_word_probs
+```
+Create efficient lookup table
+
+```{r}
+dt_urdu_word_probs <- df_urdu_word_probs %>% as.data.table()
+setkey(dt_urdu_word_probs,"name")
+```
+
+Evaluate performance (create confusion matrix)
+
+```{r}
+categorize_phrase <- function(df_phrase) {
+  dt_pivot <- df_phrase %>%
+    pivot_longer(-sentiment,names_to="name") %>%
+    as.data.table()
+    
+  df_sums <- merge(dt_pivot,dt_urdu_word_probs,by="name") %>%
+    # inner_join(df_urdu_word_probs) %>%
+    mutate_at(vars(Negative:Positive),~.*log(1+value)) %>%
+    summarize_at(vars(Negative:Positive),sum,na.rm=T)
+    pred <- with(df_sums,
+                 { sum_max <- which.max(c(Negative,Neutral,Positive))
+                 c("Negative","Neutral","Positive")[sum_max] })
+    pred
+}
+
+df_urdu_dtm_test %>% head(1) %>% categorize_phrase()
+```
+
+Slow: predict on test set
+
+```{r,eval=F}
+df_urdu_dtm_test_confusion_mtx <- df_urdu_dtm_test %>%
+  # head(200) %>%
+  mutate(pred=pmap_chr(., ~categorize_phrase(as_tibble_row(list(...))))) %>%
+  select(sentiment,pred) %>%
+  count(sentiment,pred) %>%
+  pivot_wider(names_from = "pred",values_from="n")
+df_urdu_dtm_test_confusion_mtx %>% write_csv("data/simple_confusion_mtx_norm_col_tf_idf.csv")
+```
+
+## Confusion Matrix: normalize cols
+
+```{r}
+read_csv("data/simple_confusion_mtx_norm_col.csv") %>%
+  rowwise() %>%
+  mutate(total=c_across(Negative:Positive)%>%sum) %>%
+  mutate_at(vars(Negative:Positive),~./total)
+```
+
+## Confusion Matrix: normalize cols with tf*idf
+
+```{r}
+read_csv("data/simple_confusion_mtx_norm_col_tf_idf.csv") %>%
+  rowwise() %>%
+  mutate(total=c_across(Negative:Positive)%>%sum) %>%
+  mutate_at(vars(Negative:Positive),~./total)
+```
+
+# (Successful) Attempt 2: Machine Learning
+
+Bring sentiment column: allocate twice the weight to Negative which becomes the "TRUE"
+
+```{r,eval=F}
+df_urdu_dtm_y <- df_urdu_dtm %>%
+  # double the weight on negatives
+  mutate(weight=if_else(sentiment=="Negative",2,1)) %>%
+  select(sentiment,weight,everything()) %>%
+  # filter(sentiment!="Neutral") %>%
+  mutate(sentiment=sentiment=="Negative")
+```
 
 ```{r}
 h2o.init()
@@ -226,19 +330,6 @@ df_urdu_mtx %>% as_tibble %>%
   filter(has_na)
 ```
 Convert to h2o matrix
-
-Bring sentiment column: allocate twice the weight to Negative which becomes the "TRUE"
-
-```{r,eval=F}
-df_urdu_dtm_y <- df_urdu_dtm %>%
-  bind_cols(df_urdu_clean %>% select(sentiment) %>%
-              mutate_at(vars(sentiment),as.factor)) %>%
-  # double the weight on negatives
-  mutate(weight=if_else(sentiment=="Negative",2,1)) %>%
-  select(sentiment,weight,everything()) %>%
-  # filter(sentiment!="Neutral") %>%
-  mutate(sentiment=sentiment=="Negative")
-```
 
 Cast to h2o data frame
 
