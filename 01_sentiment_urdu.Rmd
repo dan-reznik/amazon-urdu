@@ -32,8 +32,8 @@ be addressed in a larger project.
 1. Analyze data, data quality, cleanse data
 1. Will go for a "bag of words" (orderless) approach. Create document term matrix (rows are the documents, columns are non-sparse terms)
 1. Filter out "neutrals", only keep "negative" and "positive" documents
-1. Train multiple ML models (H2O automl) with double weights on the negative training examples, use "misclassification" as the functional to optimize.
-1. Produce a leaderboard, report metrics, e.g., our AUC was 81-82%, and confusion matrix shows error rate for negatives of only 11%.
+1. Train multiple classifier models (H2O automl) with double weights on the negative training examples, use "misclassification" as the functional to optimize. Positive+Neutral are lumped
+1. Produce a leaderboard, report metrics, e.g., our 5-CV AUC was ~75%, and confusion matrix shows error rate for negatives of only 13%.
 1. Suggestions for improvements to the appearin the end
 
 # Analyze input file
@@ -195,8 +195,8 @@ mtx <- inspect(dtm_urdu[1:10,1:100]) %>% as.matrix
 mtx %>% dim
 ```
 
-Note: 99.8% sparsity => 673 columns, AUC ~ 80%
-995 => ~200 columns, AUC falls to 75%
+Note: 99.8% sparsity => 673 columns, AUC ~ 75%
+995 => ~200 columns, AUC falls to 70%
 
 ```{r}
 df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>% as.matrix %>% as_tibble
@@ -227,7 +227,7 @@ df_urdu_mtx %>% as_tibble %>%
 ```
 Convert to h2o matrix
 
-Bring sentiment column: note, removing neutral and allocate twice the weight to Negative
+Bring sentiment column: allocate twice the weight to Negative which becomes the "TRUE"
 
 ```{r,eval=F}
 df_urdu_dtm_y <- df_urdu_dtm %>%
@@ -236,7 +236,7 @@ df_urdu_dtm_y <- df_urdu_dtm %>%
   # double the weight on negatives
   mutate(weight=if_else(sentiment=="Negative",2,1)) %>%
   select(sentiment,weight,everything()) %>%
-  filter(sentiment!="Neutral") %>%
+  # filter(sentiment!="Neutral") %>%
   mutate(sentiment=sentiment=="Negative")
 ```
 
@@ -247,13 +247,13 @@ df_urdu_h2o <- df_urdu_dtm_y %>%
   as.h2o()
 df_urdu_h2o
 ```
-AutoML main call (trains a bunch models, with 5-fold CV)
+AutoML main call (trains a bunch models, with 5-fold CV), 720s
 
 ```{r,eval=F}
 ml_urdu <- h2o::h2o.automl(y="sentiment",
                            weights_column = "weight",
                            training_frame=df_urdu_h2o,
-                           max_runtime_secs = 360,
+                           max_runtime_secs = 720,
                            seed=0,
                            stopping_metric = "misclassification")
 ```
@@ -270,7 +270,7 @@ Recover leaderboard
 df_leaderboard <- read_csv("leaderboard.csv")
 ```
 
-Show leader board, getting ~81% AUC
+Show leader board, getting ~74% AUC
 
 ```{r}
 df_leaderboard %>%
@@ -350,13 +350,14 @@ Assess individual or group sentiment of tweets, chats, etc. so as to:
 - Dataset
   - The sample is small (20k snippets), though the quality is generally good
   
-- Potential fine-tunings to currente approach
+- Potential fine-tunings to current approach
   - Play with sparsity threshold to include more or less words into vocabulary.
   - Use non-linear of dimensionality reduction, e.g. t-SNE, see picture below,
-    - Test Union(Neutral,Positive) vs Negative
+  - Test Union(Neutral,Positive) vs Negative
   - Use XGBoost, needs h2o on Linux or Mac
   - Could have separate classifier for "Neutral"
 - Tried but ineffective
+  - 3-class positive, negative, neutral (non-lumped)
   - PCA (no effective compression)
   - Play with TF*IDF on document term matrix (initial tests were not good)
 
