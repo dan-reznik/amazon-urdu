@@ -4,10 +4,9 @@ author: Dan S. Reznik
 date: July, 2020
 output:
   pdf_document:
-    includes:
-      in_header: preamble.tex
-    toc: true
     number_sections: true
+    toc: true
+    toc_depth: 2
     highlight: tango
 ---
 
