@@ -1,11 +1,19 @@
 ---
 title: "Urdu Language Sentiment Classifier"
-author: Dan S. Reznik
-date: 29-jul-2020
+author: "Dan S. Reznik"
+date: "July, 2020"
 output:
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+    highlight: tango
   rmdformats::readthedown:
     code_folding: show
-    number_sections: true
+    number_sections: yes
     toc_depth: 1
     highlight: tango
 ---
@@ -46,6 +54,11 @@ library(data.table)
 library(tm)
 library(xgboost)
 library(h2o)
+```
+
+```{r}
+h2o.init()
+# h2o.shutdown()
 ```
 
 Source file
@@ -196,6 +209,8 @@ mtx <- inspect(dtm_urdu[1:10,1:100]) %>% as.matrix
 mtx %>% dim
 ```
 
+## Assemble training framre
+
 Note: 99.8% sparsity => 673 columns, AUC ~ 75%
 995 => ~200 columns, AUC falls to 70%
 
@@ -206,6 +221,51 @@ df_urdu_dtm <- removeSparseTerms(dtm_urdu, 0.998) %>%
               mutate_at(vars(sentiment),as.factor)) %>%
   select(sentiment,everything())
 df_urdu_dtm %>% dim
+```
+
+```{r,eval=F}
+df_urdu_dtm %>% write_rds("data/df_urdu_dtm.rds",compress = "bz2")
+```
+
+# Compressibility Analysis
+
+## Scree plot of PCA
+
+```{r,eval=F}
+urdu_dtm_pca <- h2o.prcomp(df_urdu_dtm %>% as.h2o,
+                        k = 50,
+                        impute_missing = T
+                        #,use_all_factor_levels = TRUE
+                        #,pca_method = "GLRM"
+                        #,transform = "STANDARDIZE"
+                        )
+
+df_urdu_pca <- urdu_dtm_pca@model$model_summary %>%
+  as.data.frame %>%
+  as.matrix %>%
+  t() %>%
+  as_tibble(rownames = "component") %>%
+  mutate(n=row_number(),.before=1)
+df_urdu_pca %>% write_csv("data/df_urdu_pca.csv")
+```
+
+```{r,include=F}
+df_urdu_pca <- read_csv("data/df_urdu_pca.csv")
+```
+
+Bad PCA compression!
+
+```{r}
+df_urdu_pca %>%
+  ggplot(aes(n,`Cumulative Proportion`)) +
+  geom_line() +
+  geom_point() +
+  labs(title="PCA: Cumulative explained variance")
+```
+
+## t-SNE low dim viz
+
+```{r, child='02_rtsne.Rmd'}
 ```
 
 # (Failed Attempt 1): Linear separability
@@ -309,16 +369,6 @@ df_urdu_dtm_y <- df_urdu_dtm %>%
   mutate(sentiment=sentiment=="Negative")
 ```
 
-```{r}
-h2o.init()
-# h2o.shutdown()
-```
-
-XGBoost only available on mac or linux
-
-```{r,eval=F}
-h2o.xgboost.available()
-```
 
 Slow: do any of the columns have NA
 
@@ -329,7 +379,6 @@ df_urdu_mtx %>% as_tibble %>%
   mutate(has_na=pmap_lgl(.,~any_na(list(...)))) %>%
   filter(has_na)
 ```
-Convert to h2o matrix
 
 Cast to h2o data frame
 
@@ -338,6 +387,7 @@ df_urdu_h2o <- df_urdu_dtm_y %>%
   as.h2o()
 df_urdu_h2o
 ```
+
 AutoML main call (trains a bunch models, with 5-fold CV), 720s
 
 ```{r,eval=F}

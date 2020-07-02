@@ -1,0 +1,49 @@
+```{r,eval=F}
+library(tidyverse)
+library(Rtsne)
+```
+
+Read document term matrix
+
+```{r,eval=F}
+df_urdu_dtm <- read_rds("data/df_urdu_dtm.rds")
+```
+
+Dedup and run rtsne
+
+```{r,eval=F}
+df_urdu_dtm_dedup <- df_urdu_dtm %>%
+  distinct(across(-sentiment),.keep_all = T)
+  
+urdu_mtx <- df_urdu_dtm_dedup %>%
+  select(-sentiment) %>%
+  as.matrix()
+
+rtsne_urdu <- Rtsne(urdu_mtx,
+                    pca=F,
+                    check_duplicates = F # hack
+                    )
+df_rtsne_urdu_xy <- rtsne_urdu$Y %>%
+  as_tibble(.name_repair = "unique") %>%
+  set_names(c("X","Y")) %>%
+  bind_cols(df_urdu_dtm_dedup%>%select(sentiment)
+            #%>%head(5000)
+            )
+
+df_rtsne_urdu_xy %>% write_rds("data/df_rtsne_urdu_xy.rds")
+```
+
+```{r,include=F}
+df_rtsne_urdu_xy <- read_rds("data/df_rtsne_urdu_xy.rds")
+```
+
+Plot colored by sentiment
+
+```{r}
+df_rtsne_urdu_xy %>%
+  ggplot(aes(x=X,y=Y,color=sentiment)) +
+  geom_point()
+```
+
+
+
