@@ -1,1 +1,39 @@
-# amazon-urdu
+Sentiment Analysis: Urdu Language
+================
+
+  - *Background*: A large multinational corporation is seeking to
+    automatically identify the sentiment that their customer base talks
+    about on social media. They would like to expand this capability
+    into multiple languages. Many 3rd party tools exist for sentiment
+    analysis, however, they need help with under-resourced languages.
+
+  - *Goal*: Train a sentiment classifier (Positive, Negative, Neutral)
+    on a corpus of the provided documents. Your goal is to maximize
+    accuracy. There is special interest in being able to accurately
+    detect negative sentiment. The training data includes documents from
+    a wide variety of sources, not merely social media, and some of it
+    may be inconsistently labeled. Please describe the business outcomes
+    in your work sample including how data limitations impact your
+    results and how these limitations could be addressed in a larger
+    project.
+
+  - *Data*: Link to data:
+    <http://archive.ics.uci.edu/ml/datasets/Roman+Urdu+Data+Set>
+
+## Outline of the solution:
+
+1.  Analyze data, data quality, cleanse data
+2.  Will go for a “bag of words” (orderless) approach. Create document
+    term matrix (rows are the documents, columns are non-sparse terms)
+3.  Filter out “neutrals”, only keep “negative” and “positive” documents
+4.  Train multiple classifier models (H2O automl) with double weights on
+    the negative training examples, use “misclassification” as the
+    functional to optimize. Positive+Neutral are lumped
+5.  Produce a leaderboard, report metrics, e.g., our 5-CV AUC was \~75%,
+    and confusion matrix shows error rate for negatives of only 13%.
+6.  Suggestions for improvements to the appearin the end
+
+# Site of the Solution
+
+An html notebook of the solution can be found
+[here](https://rpubs.com/dreznik/urdu-sentiment)
