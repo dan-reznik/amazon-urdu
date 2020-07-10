@@ -3,9 +3,6 @@ title: "Urdu Language Sentiment Classifier"
 author: "Dan S. Reznik"
 date: "July, 2020"
 output:
-  word_document:
-    toc: yes
-    toc_depth: '2'
   pdf_document:
     number_sections: yes
     toc: yes
@@ -358,7 +355,13 @@ read_csv("data/simple_confusion_mtx_norm_col_tf_idf.csv") %>%
 
 # (Successful) Attempt 2: Machine Learning
 
+```{r}
+df_urdu_dtm <- read_rds("data/df_urdu_dtm.rds")
+```
+
+
 Bring sentiment column: allocate twice the weight to Negative which becomes the "TRUE"
+
 
 ```{r,eval=F}
 df_urdu_dtm_y <- df_urdu_dtm %>%
@@ -373,17 +376,18 @@ df_urdu_dtm_y <- df_urdu_dtm %>%
 Slow: do any of the columns have NA
 
 ```{r,eval=F}
-any_na <- function(vals) any(is.na(vals))
+#any_na <- function(vals) any(is.na(vals))
 
-df_urdu_mtx %>% as_tibble %>%
-  mutate(has_na=pmap_lgl(.,~any_na(list(...)))) %>%
-  filter(has_na)
+#df_urdu_mtx %>% as_tibble %>%
+#  mutate(has_na=pmap_lgl(.,~any_na(list(...)))) %>%
+#  filter(has_na)
 ```
 
 Cast to h2o data frame
 
 ```{r,eval=F}
 df_urdu_h2o <- df_urdu_dtm_y %>%
+  select(-weight) %>%
   as.h2o()
 df_urdu_h2o
 ```
@@ -391,9 +395,12 @@ df_urdu_h2o
 AutoML main call (trains a bunch models, with 5-fold CV), 720s
 
 ```{r,eval=F}
-ml_urdu <- h2o::h2o.automl(y="sentiment",
-                           weights_column = "weight",
-                           training_frame=df_urdu_h2o,
+ml_urdu <- h2o::h2o.automl(training_frame=df_urdu_h2o,
+                           y="sentiment",
+                           #weights_column = "weight",
+                           # ADDING THIS NOW
+                           balance_classes=T,
+                           class_sampling_factors = c(1,2),
                            max_runtime_secs = 720,
                            seed=0,
                            stopping_metric = "misclassification")
@@ -402,13 +409,13 @@ ml_urdu <- h2o::h2o.automl(y="sentiment",
 Write leaderboard to file
 
 ```{r,eval=F}
-ml_urdu@leaderboard %>% as_tibble %>% write_csv("leaderboard.csv")
+ml_urdu@leaderboard %>% as_tibble %>% write_csv("leaderboard3.csv")
 ```
 
 Recover leaderboard
 
 ```{r}
-df_leaderboard <- read_csv("leaderboard.csv")
+df_leaderboard <- read_csv("leaderboard2.csv")
 ```
 
 Show leader board, getting ~74% AUC
@@ -425,7 +432,7 @@ Save names of models and models to file (to be able to retrieve order)
 ```{r,eval=F}
 ml_urdu@leaderboard$model_id %>%
   as_tibble %>%
-  write_csv("saved_models.csv")
+  write_csv("saved_models3.csv")
 
 ml_urdu@leaderboard$model_id %>%
   as.data.frame %>% pull(model_id) %>%
@@ -436,7 +443,7 @@ ml_urdu@leaderboard$model_id %>%
 Read saved models list
 
 ```{r}
-df_saved_models <- read_csv("saved_models.csv")
+df_saved_models <- read_csv("saved_models3.csv")
 ```
 
 Retrieve saved models as h2o model objects
@@ -461,6 +468,11 @@ model_non_stacked@model_id
 ```
 
 Plot AUC of top non-stacked model
+
+```{r}
+model_non_stacked
+```
+
 
 ```{r}
 plot(model_non_stacked%>%h2o.performance(xval=T),type="roc")
